@@ -460,7 +460,7 @@ impl<F: PrimeField32> Default for CoreShapeConfig<F> {
 
         // Set the allowed preprocessed log2 heights.
         let allowed_preprocessed_log2_heights = HashMap::from([
-            (RiscvAirId::Program, vec![Some(19), Some(20), Some(21), Some(22)]),
+            (RiscvAirId::Program, vec![Some(19), Some(20), Some(21), Some(22), Some(25)]),
             (RiscvAirId::Byte, vec![Some(16)]),
         ]);
 
