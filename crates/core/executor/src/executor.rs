@@ -293,8 +293,19 @@ impl<'a> Executor<'a> {
                     })
                     .unwrap_or(1);
 
+                let mapping = std::env::var("TRACE_MAPPING_FILE")
+                    .ok()
+                    .map(|mapping_file| {
+                        eprintln!("Profiling function mapping file: {mapping_file}");
+
+                        let data = std::fs::read(mapping_file).expect("reading mapping file");
+                        let mapping = serde_json::from_slice(&data).expect("parse mapping file");
+
+                        mapping
+                    });
+
                 self.profiler = Some((
-                    Profiler::new(elf_bytes, sample_rate as u64)
+                    Profiler::new(elf_bytes, sample_rate as u64, mapping)
                         .expect("Failed to create profiler"),
                     trace_buf,
                 ));

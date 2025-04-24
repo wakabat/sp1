@@ -42,7 +42,11 @@ struct Sample {
 }
 
 impl Profiler {
-    pub(super) fn new(elf_bytes: &[u8], sample_rate: u64) -> Result<Self, ProfilerError> {
+    pub(super) fn new(
+        elf_bytes: &[u8],
+        sample_rate: u64,
+        mapping: Option<HashMap<String, String>>,
+    ) -> Result<Self, ProfilerError> {
         let elf = Elf::parse(elf_bytes)?;
 
         let mut start_lookup = HashMap::new();
@@ -64,6 +68,10 @@ impl Profiler {
                 // Now that we have the name let's immediately intern it so we only need to copy
                 // around a usize
                 let demangled_name = demangled_name.to_string();
+                let demangled_name = mapping
+                    .as_ref()
+                    .and_then(|mapping| mapping.get(&demangled_name).cloned())
+                    .unwrap_or(demangled_name);
                 let string_idx = builder.intern_string(&demangled_name);
                 if main_idx.is_none() && demangled_name == "main" {
                     main_idx = Some(string_idx);
