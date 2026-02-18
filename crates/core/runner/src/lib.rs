@@ -19,6 +19,10 @@
 /// means the actual memory usage for portable executor will exceed this limit.
 pub const DEFAULT_MEMORY_LIMIT: u64 = 24 * 1024 * 1024 * 1024; // 24 GB
 
+// TODO: implement tests for portable executor
+#[cfg(all(test, sp1_use_native_executor))]
+pub mod tests;
+
 #[cfg(sp1_use_native_executor)]
 mod native;
 
