@@ -7412,6 +7412,7 @@ dependencies = [
  "rand 0.8.5",
  "slop-algebra",
  "sp1-core-executor",
+ "sp1-core-executor-runner",
  "sp1-core-machine",
  "sp1-cuda",
  "sp1-hypercube",

@@ -48,6 +48,7 @@ fn main() {
     use std::{
         io::{self, BufReader, BufWriter, Write},
         ops::DerefMut,
+        time::Instant,
     };
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -66,14 +67,20 @@ fn main() {
 
     let mut reader = BufReader::new(io::stdin().lock());
     let input: Input = bincode::deserialize_from(&mut reader).expect("deserializing input");
+    let mut perfs = Vec::new();
 
+    let now = if input.print_perf { Some(Instant::now()) } else { None };
     let transpiler =
         MinimalTranspiler::new(input.max_memory_size, input.is_debug, input.max_trace_size);
     let mut compiled = transpiler.transpile::<SharedMemory>(input.program.as_ref());
+    if let Some(now) = now {
+        perfs.push(("transpile time".to_string(), now.elapsed()));
+    }
     compiled.memory.open_readwrite(&input.id).expect("initialize memory");
     compiled.with_initial_memory_image(input.program.memory_image.clone());
     compiled.set_input_buffer(input.input.clone());
 
+    let now = if input.print_perf { Some(Instant::now()) } else { None };
     if transpiler.tracing() {
         // Tracing mode is on
         let trace_buf_size = trace_capacity(input.max_trace_size);
@@ -103,12 +110,16 @@ fn main() {
         }
         assert_eq!(compiled.pc, HALT_PC);
     }
+    if let Some(now) = now {
+        perfs.push(("execution time".to_string(), now.elapsed()));
+    }
 
     let output = Output {
         public_values_stream: compiled.public_values_stream,
         hints: compiled.hints,
         global_clk: compiled.global_clk,
         exit_code: compiled.exit_code,
+        perfs,
     };
 
     let stdout = io::stdout();

@@ -173,20 +173,59 @@ fn execute_minimal(elf: Vec<u8>, stdin: SP1Stdin, trace: bool) {
 
     let now = std::time::Instant::now();
     let program = Arc::new(Program::from(&elf).expect("parse elf"));
+    let transpile_now = std::time::Instant::now();
     let mut executor = MinimalExecutor::new(program, false, max_trace_size);
+    let transpile_time = transpile_now.elapsed();
     for buf in stdin.buffer {
         executor.with_input(&buf);
     }
-    let time = now.elapsed();
-    println!("MinimalExecutor creation time: {:?}", time);
+    let creation_time = now.elapsed();
+
+    let execution_now = std::time::Instant::now();
+    while executor.execute_chunk().is_some() {}
+    let execution_time = execution_now.elapsed();
+    let total_time = now.elapsed();
+
+    println!("exit code: {}, cycles: {}", executor.exit_code(), executor.global_clk());
+    println!("total time: {:?}", total_time);
+    println!("executor creation time: {:?}", creation_time);
+    println!("transpile time: {:?}", transpile_time);
+    println!("execution time: {:?}", execution_time);
+    println!(
+        "mhz: {}",
+        executor.global_clk() as f64 / (execution_time.as_secs_f64() * 1_000_000.0)
+    );
+}
+
+// Executes process based MinimalExecutorRunner
+fn execute_runner(elf: Vec<u8>, stdin: SP1Stdin, trace: bool) {
+    let opts = SP1CoreOpts::default();
+    let max_trace_size = if trace { Some(opts.minimal_trace_chunk_threshold) } else { None };
 
     let now = std::time::Instant::now();
+    let program = Arc::new(Program::from(&elf).expect("parse elf"));
+    let mut executor = sp1_core_executor_runner::MinimalExecutorRunner::new(
+        program,
+        false,
+        max_trace_size,
+        opts.memory_limit,
+        opts.trace_chunk_slots,
+    );
+    executor.set_print_perf();
+    for buf in stdin.buffer {
+        executor.with_input(&buf);
+    }
     while executor.execute_chunk().is_some() {}
     let time = now.elapsed();
 
     println!("exit code: {}, cycles: {}", executor.exit_code(), executor.global_clk());
-    println!("execution time: {:?}", time);
-    println!("mhz: {}", executor.global_clk() as f64 / (time.as_secs_f64() * 1_000_000.0));
+    println!("total time: {:?}", time);
+    for (marker, time) in executor.perfs() {
+        println!("{}: {:?}", marker, time);
+        if marker == "execution time" {
+            println!("mhz: {}", executor.global_clk() as f64 / (time.as_secs_f64() * 1_000_000.0));
+        }
+    }
 }
 
 pub fn get_program_and_input(program: String, param: String, local: bool) -> (Vec<u8>, SP1Stdin) {
@@ -259,6 +298,8 @@ async fn main() {
         "gas" => execute_gas(elf, stdin).await,
         "minimal" => execute_minimal(elf, stdin, false),
         "minimal_trace" => execute_minimal(elf, stdin, true),
+        "runner" => execute_runner(elf, stdin, false),
+        "runner_trace" => execute_runner(elf, stdin, true),
         _ => panic!("invalid mode"),
     }
 }

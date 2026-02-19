@@ -18,7 +18,7 @@ use std::{
     ptr::NonNull,
     sync::Arc,
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use sysinfo::{Pid, System};
 
@@ -34,6 +34,7 @@ pub struct MinimalExecutorRunner {
 
     process: Option<(Child, JoinHandle<()>)>,
     output: Option<Result<Output, ExecutionError>>,
+    perfs: Vec<(String, Duration)>,
 }
 
 impl MinimalExecutorRunner {
@@ -65,10 +66,11 @@ impl MinimalExecutorRunner {
             id,
             max_memory_size: 2_u64.pow(MAX_JIT_LOG_ADDR as u32) as usize,
             memory_limit,
+            print_perf: false,
         };
         let (memory, consumer) = create(&input);
 
-        Self { input, consumer, memory, process: None, output: None }
+        Self { input, consumer, memory, process: None, output: None, perfs: Vec::new() }
     }
 
     /// Create a new minimal executor with no tracing or debugging.
@@ -103,6 +105,16 @@ impl MinimalExecutorRunner {
         Self::new(program, true, None, DEFAULT_MEMORY_LIMIT, 0)
     }
 
+    /// Print performance information to log
+    pub fn set_print_perf(&mut self) {
+        self.input.print_perf = true;
+    }
+
+    /// Return gathered perf information
+    pub fn perfs(&self) -> &[(String, Duration)] {
+        &self.perfs
+    }
+
     /// Add input to the executor.
     pub fn with_input(&mut self, input: &[u8]) {
         // Input can only be added when process hasn't been started yet.
@@ -125,6 +137,7 @@ impl MinimalExecutorRunner {
         }
 
         if self.process.is_none() {
+            let now = if self.input.print_perf { Some(Instant::now()) } else { None };
             // Start the process
             let mut child = spawn_restricted(
                 Command::new(crate::binary::get_binary_path()),
@@ -150,6 +163,9 @@ impl MinimalExecutorRunner {
             });
 
             self.process = Some((child, log_handle));
+            if let Some(now) = now {
+                self.perfs.push(("process creation time".to_string(), now.elapsed()));
+            }
         }
 
         if let Some(consumer) = &self.consumer {
@@ -231,15 +247,21 @@ impl MinimalExecutorRunner {
     fn wait_for_success(&mut self) {
         // SP1 program terminates, wait for output and terminate child process.
         let (mut child, log_thread) = self.process.take().unwrap();
+
+        let now = if self.input.print_perf { Some(Instant::now()) } else { None };
         let stdout = child.stdout.take().expect("open stdout");
         let mut stdout_reader = BufReader::new(stdout);
-
         let output: Output = bincode::deserialize_from(&mut stdout_reader).expect("read output");
+        if let Some(now) = now {
+            self.perfs.push(("parse output time".to_string(), now.elapsed()));
+        }
+
         let status = child.wait().expect("wait for child to exit");
         log_thread.join().expect("wait for log thread to finish");
         // Normal termination, this should just return success.
         assert!(status.success());
 
+        self.perfs.extend_from_slice(&output.perfs);
         self.output = Some(Ok(output));
     }
 
@@ -350,6 +372,7 @@ impl MinimalExecutorRunner {
         let (memory, consumer) = create(&self.input);
         self.memory = memory;
         self.consumer = consumer;
+        self.perfs.clear();
     }
 }
 
