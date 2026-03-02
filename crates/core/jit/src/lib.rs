@@ -211,7 +211,7 @@ pub struct JitFunction<M> {
     /// Kept purely for ownership / drop semantics; `entry_fn` holds the actual
     /// pointer used at call time.
     #[allow(dead_code)]
-    code: Option<ExecutableBuffer>,
+    pub code: Option<ExecutableBuffer>,
     /// Cached entry-point pointer derived from `code` or from a linker symbol.
     /// This is what [`Self::call`] actually invokes.
     entry_fn: fn(*mut JitContext),

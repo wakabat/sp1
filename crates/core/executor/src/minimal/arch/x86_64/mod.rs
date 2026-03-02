@@ -397,9 +397,9 @@ impl UnsafeMemory {
 /// Later when we implement mprotect, the struct will then become a necessary component.
 #[derive(Debug)]
 pub struct MinimalTranspiler {
-    max_memory_size: usize,
-    is_debug: bool,
-    max_trace_size: u64,
+    pub(crate) max_memory_size: usize,
+    pub(crate) is_debug: bool,
+    pub(crate) max_trace_size: u64,
 }
 
 impl MinimalTranspiler {
@@ -427,7 +427,7 @@ impl MinimalTranspiler {
     /// Transpile the program, saving the JIT function.
     #[allow(clippy::unused_self)]
     #[tracing::instrument(name = "MinimalTranspiler::transpile", level = "debug", skip(program))]
-    pub fn transpile<M: JitMemory>(&self, program: &Program) -> JitFunction<M> {
+    pub(crate) fn transpile<M: JitMemory>(&self, program: &Program) -> JitFunction<M> {
         let mut backend = TranspilerBackend::new(
             program.instructions.len(),
             self.memory_buffer_size(),

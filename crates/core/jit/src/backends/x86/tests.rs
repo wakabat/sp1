@@ -38,6 +38,62 @@ fn run_test(assembler: TranspilerBackend) {
     run_func(&mut func);
 }
 
+mod debug {
+    use super::*;
+
+    #[test]
+    fn test_jit_and_dump_code() {
+        #[allow(unused_imports)]
+        use crate::TraceCollector;
+        use dynasmrt::DynasmApi;
+        use std::ops::Deref;
+
+        // Set this to 0 to disable tracing
+        let max_trace_size = 100;
+        let mut backend = TranspilerBackend::new(
+            1,        // Program size
+            1024 * 2, // Memory size
+            max_trace_size,
+            100, // PC start
+            100, // PC base
+            8,   // clk bump
+        )
+        .unwrap();
+
+        let start_offset = backend.inner.offset().0;
+        eprintln!("Start offset: {start_offset} or 0x{start_offset:x}");
+        backend.start_instr();
+
+        // {
+        //     // LD or SD
+        //     if max_trace_size > 0 {
+        //         backend.trace_mem_value(RiscRegister::X9, 8);
+        //     }
+        //     backend.ld(RiscRegister::X11, RiscRegister::X9, 8);
+        // }
+
+        {
+            // ADDI
+            backend.mul(
+                RiscRegister::X5,
+                RiscOperand::Register(RiscRegister::X7),
+                RiscOperand::Register(RiscRegister::X12),
+            );
+        }
+
+        backend.end_instr();
+        let end_offset = backend.inner.offset().0;
+        eprintln!("End offset: {end_offset} or 0x{end_offset:x}");
+
+        let func: JitFunction<AnonymousMemory> = backend.finalize().unwrap();
+        let code = func.code.as_ref().unwrap().deref().to_vec();
+
+        std::fs::write("/tmp/sp1_jit_code_full.bin", &code).expect("write");
+        std::fs::write("/tmp/sp1_jit_code_inst.bin", &code[start_offset..end_offset])
+            .expect("write");
+    }
+}
+
 mod alu {
     use super::*;
 

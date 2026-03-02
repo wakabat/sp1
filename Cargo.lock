@@ -6615,6 +6615,7 @@ dependencies = [
  "cfg-if",
  "clap",
  "deepsize2",
+ "dynasmrt",
  "elf",
  "enum-map",
  "eyre",
