@@ -63,7 +63,7 @@ const REGISTERS_OFFSET: i32 = offset_of!(JitContext, registers) as i32;
 /// The x86 backend for JIT transpipling RISC-V instructions to x86-64, according to the
 /// [crate::SP1RiscvTranspiler] trait.
 pub struct TranspilerBackend {
-    inner: Assembler,
+    pub inner: Assembler,
     /// A mapping of pc - pc_base => offset in the code buffer.
     jump_table: Vec<usize>,
     /// The size of the memory buffer to allocate.

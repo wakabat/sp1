@@ -200,7 +200,7 @@ pub struct JitFunction<M> {
 #[cfg(sp1_native_executor_available)]
 pub struct JitFunction<M> {
     jump_table: Vec<*const u8>,
-    code: ExecutableBuffer,
+    pub code: ExecutableBuffer,
 
     /// The initial memory image.
     initial_memory_image: Arc<HashMap<u64, u64>>,
