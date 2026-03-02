@@ -13,6 +13,9 @@ cfg_if::cfg_if! {
         #[cfg(test)]
         #[allow(dead_code)]
         pub mod x86_64;
+        #[cfg(test)]
+        #[allow(dead_code)]
+        pub use x86_64::MinimalTranspiler;
     }
     // On other architectures/platforms: use portable backend only
     else {

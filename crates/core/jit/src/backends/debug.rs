@@ -6,7 +6,7 @@ use crate::{
 use std::io;
 
 pub struct DebugBackend<B: RiscvTranspiler> {
-    backend: B,
+    pub backend: B,
 }
 
 impl<B: RiscvTranspiler> DebugBackend<B> {

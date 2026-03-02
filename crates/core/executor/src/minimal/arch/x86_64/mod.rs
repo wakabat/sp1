@@ -267,9 +267,9 @@ impl UnsafeMemory {
 /// Later when we implement mprotect, the struct will then become a necessary component.
 #[derive(Debug)]
 pub struct MinimalTranspiler {
-    max_memory_size: usize,
-    is_debug: bool,
-    max_trace_size: u64,
+    pub(crate) max_memory_size: usize,
+    pub(crate) is_debug: bool,
+    pub(crate) max_trace_size: u64,
 }
 
 impl MinimalTranspiler {
@@ -317,7 +317,7 @@ impl MinimalTranspiler {
         }
     }
 
-    fn transpile_instructions<B: RiscvTranspiler, M: JitMemory>(
+    pub(crate) fn transpile_instructions<B: RiscvTranspiler, M: JitMemory>(
         &self,
         mut backend: B,
         program: &Program,
