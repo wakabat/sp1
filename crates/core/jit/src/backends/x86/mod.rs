@@ -105,26 +105,85 @@ impl TraceCollector for TranspilerBackend {
 
     /// Write the value at [rs1 + imm] into the trace buffer.
     fn trace_mem_value(&mut self, rs1: RiscRegister, imm: u64) {
-        const TAIL_START_OFFSET: i32 = std::mem::size_of::<TraceChunkHeader>() as i32;
-        const NUM_MEM_READS_OFFSET: i32 = offset_of!(TraceChunkHeader, num_mem_reads) as i32;
-        const IS_UNCONSTRAINED_OFFSET: i32 = offset_of!(JitContext, is_unconstrained) as i32;
-
         // Load the value, assumed to be of a memory read, into TEMP_A.
         self.emit_risc_operand_load(rs1.into(), TEMP_A);
-        self.load_memory_ptr(TEMP_B);
 
         dynasm! {
             self;
             .arch x64;
 
-            // Check if were in unconstrained mode.
-            cmp QWORD [Rq(CONTEXT) + IS_UNCONSTRAINED_OFFSET], 1;
-            je >done;
-
             // ------------------------------------
             // Compute the address to load from.
             // ------------------------------------
             add Rq(TEMP_A), imm as i32;
+
+            call ->trace
+        }
+    }
+
+    /// Write the start pc of the trace chunk.
+    fn trace_pc_start(&mut self) {
+        const PC_START_OFFSET: i32 = offset_of!(TraceChunkHeader, pc_start) as i32;
+
+        self.load_pc_into_register(TEMP_A);
+
+        dynasm! {
+            self;
+            .arch x64;
+
+            mov [Rq(TRACE_BUF) + PC_START_OFFSET], Rq(TEMP_A)
+        }
+    }
+
+    /// Write the start clk of the trace chunk.
+    fn trace_clk_start(&mut self) {
+        const CLK_START_OFFSET: i32 = offset_of!(TraceChunkHeader, clk_start) as i32;
+        const CLK_OFFSET: i32 = offset_of!(JitContext, clk) as i32;
+
+        dynasm! {
+            self;
+            .arch x64;
+
+            mov Rq(TEMP_A), QWORD [Rq(CONTEXT) + CLK_OFFSET];
+            mov [Rq(TRACE_BUF) + CLK_START_OFFSET], Rq(TEMP_A)
+        }
+    }
+
+    fn trace_clk_end(&mut self) {
+        const CLK_END_OFFSET: i32 = offset_of!(TraceChunkHeader, clk_end) as i32;
+        const CLK_OFFSET: i32 = offset_of!(JitContext, clk) as i32;
+
+        dynasm! {
+            self;
+            .arch x64;
+            mov Rq(TEMP_A), [Rq(CONTEXT) + CLK_OFFSET];
+            mov [Rq(TRACE_BUF) + CLK_END_OFFSET], Rq(TEMP_A)
+        }
+    }
+}
+
+impl TranspilerBackend {
+    fn trace_mem_value_impl(&mut self) {
+        const TAIL_START_OFFSET: i32 = std::mem::size_of::<TraceChunkHeader>() as i32;
+        const NUM_MEM_READS_OFFSET: i32 = offset_of!(TraceChunkHeader, num_mem_reads) as i32;
+        const IS_UNCONSTRAINED_OFFSET: i32 = offset_of!(JitContext, is_unconstrained) as i32;
+
+        dynasm! {
+            self;
+            .arch x64;
+
+            ->trace:;
+
+            // Check if were in unconstrained mode.
+            cmp QWORD [Rq(CONTEXT) + IS_UNCONSTRAINED_OFFSET], 1;
+            je >done
+        }
+
+        self.load_memory_ptr(TEMP_B);
+
+        dynasm! {
+            self;
+            .arch x64;
 
             // ------------------------------------
             // Align to the start of the word.
@@ -176,52 +235,12 @@ impl TraceCollector for TranspilerBackend {
             // ------------------------------------
             add QWORD [Rq(TRACE_BUF) + NUM_MEM_READS_OFFSET], 1;
 
-            done:
+            done:;
+
+            ret
         }
     }
 
-    /// Write the start pc of the trace chunk.
-    fn trace_pc_start(&mut self) {
-        const PC_START_OFFSET: i32 = offset_of!(TraceChunkHeader, pc_start) as i32;
-
-        self.load_pc_into_register(TEMP_A);
-
-        dynasm! {
-            self;
-            .arch x64;
-
-            mov [Rq(TRACE_BUF) + PC_START_OFFSET], Rq(TEMP_A)
-        }
-    }
-
-    /// Write the start clk of the trace chunk.
-    fn trace_clk_start(&mut self) {
-        const CLK_START_OFFSET: i32 = offset_of!(TraceChunkHeader, clk_start) as i32;
-        const CLK_OFFSET: i32 = offset_of!(JitContext, clk) as i32;
-
-        dynasm! {
-            self;
-            .arch x64;
-
-            mov Rq(TEMP_A), QWORD [Rq(CONTEXT) + CLK_OFFSET];
-            mov [Rq(TRACE_BUF) + CLK_START_OFFSET], Rq(TEMP_A)
-        }
-    }
-
-    fn trace_clk_end(&mut self) {
-        const CLK_END_OFFSET: i32 = offset_of!(TraceChunkHeader, clk_end) as i32;
-        const CLK_OFFSET: i32 = offset_of!(JitContext, clk) as i32;
-
-        dynasm! {
-            self;
-            .arch x64;
-            mov Rq(TEMP_A), [Rq(CONTEXT) + CLK_OFFSET];
-            mov [Rq(TRACE_BUF) + CLK_END_OFFSET], Rq(TEMP_A)
-        }
-    }
-}
-
-impl TranspilerBackend {
     fn tracing(&self) -> bool {
         self.max_trace_size > 0
     }
@@ -318,6 +337,17 @@ impl TranspilerBackend {
                 "No instructions were emitted, 
                 cannot finalize as this will break assumptions made in the jump table."
             );
+        }
+
+        if self.tracing() {
+            dynasm! {
+                self;
+                .arch x64;
+
+                jmp ->exit
+            }
+
+            self.trace_mem_value_impl();
         }
 
         // Start the global exit label.
