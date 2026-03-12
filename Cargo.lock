@@ -7401,6 +7401,7 @@ dependencies = [
  "sp1-core-machine",
  "sp1-cuda",
  "sp1-hypercube",
+ "sp1-jit",
  "sp1-primitives",
  "sp1-prover",
  "sp1-prover-types",

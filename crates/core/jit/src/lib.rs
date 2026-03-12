@@ -12,6 +12,11 @@ pub mod memory;
 pub mod risc;
 pub mod shm;
 
+#[cfg(feature = "jit-profiling")]
+mod linux_perf;
+#[cfg(feature = "jit-profiling")]
+mod vtune;
+
 use dynasmrt::ExecutableBuffer;
 use hashbrown::HashMap;
 use std::{
@@ -224,18 +229,46 @@ pub struct JitFunction<M> {
     pub exit_code: u32,
 
     pub debug_sender: Option<mpsc::SyncSender<Option<debug::State>>>,
+
+    #[cfg(feature = "jit-profiling")]
+    #[allow(dead_code)]
+    vtune_profiler: Option<crate::vtune::VtuneJitProfiler>,
 }
 
 unsafe impl<M: Send> Send for JitFunction<M> {}
 
 #[cfg(sp1_native_executor_available)]
 impl<M: JitMemory> JitFunction<M> {
+    #[allow(unused_variables)]
     pub(crate) fn new(
         code: ExecutableBuffer,
+        actual_code_size: usize,
+        pc_base: u64,
         jump_table: Vec<usize>,
         memory_size: usize,
         pc_start: u64,
     ) -> std::io::Result<Self> {
+        #[cfg(feature = "jit-profiling")]
+        let vtune_profiler = crate::vtune::VtuneJitProfiler::new();
+        #[cfg(feature = "jit-profiling")]
+        if vtune_profiler.is_some() {
+            let base_ptr = code.as_ptr();
+            for (i, s) in jump_table.iter().enumerate() {
+                let ptr = unsafe { base_ptr.add(*s) };
+
+                let e =
+                    if i == jump_table.len() - 1 { actual_code_size } else { jump_table[i + 1] };
+                let len = e - s;
+
+                let riscv_pc = pc_base + i as u64 * 4;
+                let name = format!("jit_func_{:x}_{riscv_pc:x}", base_ptr as usize);
+
+                if let Some(ref vtune_profiler) = vtune_profiler {
+                    vtune_profiler.register_function(&name, ptr, len);
+                }
+            }
+        }
+
         // Adjust the jump table to be absolute addresses.
         let buf_ptr = code.as_ptr();
         let jump_table =
@@ -258,6 +291,8 @@ impl<M: JitMemory> JitFunction<M> {
             public_values_stream: Vec::new(),
             debug_sender: None,
             exit_code: 0,
+            #[cfg(feature = "jit-profiling")]
+            vtune_profiler,
         })
     }
 

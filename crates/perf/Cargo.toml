@@ -21,6 +21,7 @@ sp1-core-machine = { workspace = true }
 sp1-hypercube = { workspace = true }
 sp1-primitives = { workspace = true }
 sp1-cuda = { workspace = true }
+sp1-jit = { workspace = true }
 slop-algebra = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 bincode = { workspace = true }
@@ -48,3 +49,4 @@ path = "src/setup.rs"
 bigint-rug = ["sp1-core-executor/bigint-rug"]
 native-gnark = ["sp1-sdk/native-gnark"]
 network = ["sp1-sdk/network"]
+jit-profiling = ["sp1-jit/profiling"]
