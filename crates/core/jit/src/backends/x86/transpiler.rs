@@ -101,11 +101,22 @@ impl RiscvTranspiler for TranspilerBackend {
     fn finalize<M: JitMemory>(mut self) -> io::Result<JitFunction<M>> {
         self.epilogue();
 
+        // `ExecutableBuffer` is rounded up to the next power of 2. Offset
+        // gets us real code size.
+        let actual_code_size = self.inner.offset().0;
+
         let code = self.inner.finalize().expect("failed to finalize x86 backend");
 
         debug_assert!(code.size() > 0, "Got empty x86 code buffer");
 
-        JitFunction::new(code, self.jump_table, self.memory_size, self.pc_start)
+        JitFunction::new(
+            code,
+            actual_code_size,
+            self.pc_base,
+            self.jump_table,
+            self.memory_size,
+            self.pc_start,
+        )
     }
 
     fn call_extern_fn(&mut self, fn_ptr: ExternFn) {

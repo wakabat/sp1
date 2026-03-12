@@ -23,6 +23,7 @@ bincode = { workspace = true }
 
 [features]
 profiling = []
+jit-profiling = []
 
 [lints]
 workspace = true
