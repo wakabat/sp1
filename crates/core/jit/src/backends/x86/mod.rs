@@ -511,6 +511,10 @@ impl TranspilerBackend {
             self;
             .arch x64;
 
+            // Save callee-saved registers that might contain useful values
+            push r8;
+            push r9;
+
             // Save the original stack pointer
             mov Rq(SAVED_STACK_PTR), rsp;
 
@@ -525,7 +529,11 @@ impl TranspilerBackend {
             call rax;
 
             // Restore the original stack pointer
-            mov rsp, Rq(SAVED_STACK_PTR)
+            mov rsp, Rq(SAVED_STACK_PTR);
+
+            // Restore callee-saved registers
+            pop r9;
+            pop r8
         }
 
         self.load_registers_from_context();
