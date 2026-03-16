@@ -391,8 +391,10 @@ impl TranspilerBackend {
             self.trace_registers();
 
             self.hoist_trace_pointers();
-            self.hoist_clock();
         }
+
+        // Hoist clock to register
+        self.hoist_clock();
 
         // Its possible that enter back into the function with a non-zero PC.
         self.jump_to_pc();
@@ -419,9 +421,11 @@ impl TranspilerBackend {
             ->exit:
         }
 
+        // Write clock back to memory
+        self.write_back_clock();
+
         if self.tracing() {
             self.write_back_trace_pointers();
-            self.write_back_clock();
 
             self.trace_clk_end();
         }
@@ -605,7 +609,9 @@ impl TranspilerBackend {
     fn call_extern_fn_raw(&mut self, fn_ptr: usize) {
         // Before the call, save all the registers to the context.
         self.save_registers_to_context();
-        self.write_back_trace_pointers();
+        if self.tracing() {
+            self.write_back_trace_pointers();
+        }
         self.write_back_clock();
 
         // We need to save the caller-saved registers before we make any calls,
@@ -631,7 +637,9 @@ impl TranspilerBackend {
             mov rsp, Rq(CLOCK_OR_SAVED_STACK_PTR)
         }
 
-        self.hoist_trace_pointers();
+        if self.tracing() {
+            self.hoist_trace_pointers();
+        }
         self.hoist_clock();
         self.load_memory_ptr(MEMORY_PTR);
         self.load_registers_from_context();
