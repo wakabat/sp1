@@ -27,8 +27,9 @@ mod transpiler;
 // * r9 holds `tail_start` in tracing mode.
 // * r10 holds memory pointer.
 // * r15 holds clk or saved stack pointer when calling external functions.
+// * rsi holds `global_clk` in the upper 48 bits, and `unconstrained` in the
+//   lower 8 bits.
 // * TEMP_A, TEMP_B, rax, rcx, rdx, are free to used by any code sequences.
-// * rsi is reserved for now.
 
 /// The first scratch register.
 ///
@@ -78,6 +79,10 @@ const TRACE_BUF: u8 = Rq::R14 as u8;
 /// Callee-saved register.
 const CLOCK_OR_SAVED_STACK_PTR: u8 = Rq::R15 as u8;
 
+/// Global clk in the upper 48 bits, and unconstrained flag in the
+/// lower 8 bits.
+const GLOBAL_CLOCK_N_UNCONSTRAINED: u8 = Rq::RSI as u8;
+
 /// The offset of the pc in the JitContext.
 const PC_OFFSET: i32 = offset_of!(JitContext, pc) as i32;
 
@@ -89,6 +94,12 @@ const MEMORY_PTR_OFFSET: i32 = offset_of!(JitContext, memory) as i32;
 
 /// The offset of the registers in the JitContext.
 const REGISTERS_OFFSET: i32 = offset_of!(JitContext, registers) as i32;
+
+/// The offset of unconstrained flag in the JitContext.
+const IS_UNCONSTRAINED_OFFSET: i32 = offset_of!(JitContext, is_unconstrained) as i32;
+
+/// The offset of the global clk in the JitContext.
+const GLOBAL_CLK_OFFSET: i32 = offset_of!(JitContext, global_clk) as i32;
 
 /// The offset of `num_mem_reads` in TraceChunkHeader.
 const NUM_MEM_READS_OFFSET: i32 = offset_of!(TraceChunkHeader, num_mem_reads) as i32;
@@ -230,8 +241,6 @@ impl TraceCollector for TranspilerBackend {
 
     /// Write the value at [rs1 + imm] into the trace buffer.
     fn trace_mem_value(&mut self, rs1: RiscRegister, imm: u64) {
-        const IS_UNCONSTRAINED_OFFSET: i32 = offset_of!(JitContext, is_unconstrained) as i32;
-
         // Load the value, assumed to be of a memory read, into TEMP_A.
         self.emit_risc_operand_load(rs1.into(), TEMP_A);
 
@@ -240,8 +249,7 @@ impl TraceCollector for TranspilerBackend {
             .arch x64;
 
             // Check if were in unconstrained mode.
-            mov rcx, QWORD [Rq(CONTEXT) + IS_UNCONSTRAINED_OFFSET];
-            cmp rcx, 1;
+            cmp Rb(GLOBAL_CLOCK_N_UNCONSTRAINED), 1;
             je >done
         }
 
@@ -746,7 +754,11 @@ impl TranspilerBackend {
             self;
             .arch x64;
 
-            mov Rq(CLOCK_OR_SAVED_STACK_PTR), QWORD [Rq(CONTEXT) + CLK_OFFSET]
+            mov Rq(CLOCK_OR_SAVED_STACK_PTR), QWORD [Rq(CONTEXT) + CLK_OFFSET];
+            mov Rq(GLOBAL_CLOCK_N_UNCONSTRAINED), QWORD [Rq(CONTEXT) + GLOBAL_CLK_OFFSET];
+            shl Rq(GLOBAL_CLOCK_N_UNCONSTRAINED), 16;
+            movzx Rq(TEMP_A), BYTE [Rq(CONTEXT) + IS_UNCONSTRAINED_OFFSET];
+            or Rq(GLOBAL_CLOCK_N_UNCONSTRAINED), Rq(TEMP_A)
         }
     }
 
@@ -756,7 +768,10 @@ impl TranspilerBackend {
             self;
             .arch x64;
 
-            mov QWORD [Rq(CONTEXT) + CLK_OFFSET], Rq(CLOCK_OR_SAVED_STACK_PTR)
+            mov QWORD [Rq(CONTEXT) + CLK_OFFSET], Rq(CLOCK_OR_SAVED_STACK_PTR);
+            mov BYTE [Rq(CONTEXT) + IS_UNCONSTRAINED_OFFSET], Rb(GLOBAL_CLOCK_N_UNCONSTRAINED);
+            shr Rq(GLOBAL_CLOCK_N_UNCONSTRAINED), 16;
+            mov QWORD [Rq(CONTEXT) + GLOBAL_CLK_OFFSET], Rq(GLOBAL_CLOCK_N_UNCONSTRAINED)
         }
     }
 
@@ -831,8 +846,6 @@ impl TranspilerBackend {
     }
 
     fn bump_clk(&mut self) {
-        let global_clk_offset = offset_of!(JitContext, global_clk) as i32;
-        let is_unconstrained_offset = offset_of!(JitContext, is_unconstrained) as i32;
         let clk_bump = self.clk_bump as i32;
 
         dynasm! {
@@ -851,13 +864,16 @@ impl TranspilerBackend {
             // ------------------------------------
 
             // Load is_unconstrained (8-bit) into TEMP_A with zero extension
-            mov Rq(TEMP_A), QWORD [Rq(CONTEXT) + is_unconstrained_offset];
+            movzx Rq(TEMP_A), Rb(GLOBAL_CLOCK_N_UNCONSTRAINED);
 
             // XOR with 1 to invert: 0 -> 1, 1 -> 0
             xor Rq(TEMP_A), 1;
 
+            // Shift it left 16 bits, since higher 48 bits are global clock.
+            shl Rq(TEMP_A), 16;
+
             // Add the inverted value to global_clk
-            add QWORD [Rq(CONTEXT) + global_clk_offset], Rq(TEMP_A)
+            add Rq(GLOBAL_CLOCK_N_UNCONSTRAINED), Rq(TEMP_A)
         }
     }
 
