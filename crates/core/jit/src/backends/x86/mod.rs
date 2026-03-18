@@ -234,7 +234,9 @@ impl TraceCollector for TranspilerBackend {
         }
     }
 
-    /// Write the value at [rs1 + imm] into the trace buffer.
+    /// Set up registers for memory operations.
+    /// When tracing is on, and unconstrained mode is off,
+    /// write the value at [rs1 + imm] into the trace buffer.
     fn trace_mem_value(&mut self, rs1: RiscRegister, imm: u64) {
         const IS_UNCONSTRAINED_OFFSET: i32 = offset_of!(JitContext, is_unconstrained) as i32;
 
@@ -264,45 +266,52 @@ impl TraceCollector for TranspilerBackend {
             // Scale by the entry size. Add the
             // physical memory pointer.
             // ------------------------------------
-            lea Rq(TEMP_A), [Rq(MEMORY_PTR) + Rq(TEMP_A) * 2];
-
-            // ------------------------------------
-            // Load the clk & word from the memory entry into the tail.
-            // Bump the current clk in the memory entry.
-            //
-            // The code is written to minimize split RMW
-            // ------------------------------------
-            movdqu xmm15, [Rq(TEMP_A)];
-            mov rdx, Rq(CLOCK_OR_SAVED_STACK_PTR);
-            add rdx, 1;
-
-            // Check if were in unconstrained mode.
-            mov rcx, QWORD [Rq(CONTEXT) + IS_UNCONSTRAINED_OFFSET];
-            cmp rcx, 1;
-            // unconstrained label is defined in each memory access
-            // instruction.
-            je >unconstrained;
-
-            // ------------------------------------
-            // Copy `MemValue` to trace buf.
-            // ------------------------------------
-            movdqu [Rq(TAIL_START)], xmm15;
-
-            // ------------------------------------
-            // Increment the num mem reads, since weve pushed into it.
-            // ------------------------------------
-            add Rq(NUM_MEM_READS), 1;
-            add Rq(TAIL_START), 16
-
-            // ------------------------------------
-            // When trace_mem_value finishes, the following registers
-            // are available for memory operations:
-            // * rax: offset within qword
-            // * rdx: new clock value
-            // * TEMP_A: MemValue address
-            // * xmm15: loaded MemValue content
-            // ------------------------------------
+            lea Rq(TEMP_A), [Rq(MEMORY_PTR) + Rq(TEMP_A) * 2]
         }
+
+        if self.tracing() {
+            dynasm! {
+                self;
+                .arch x64;
+
+                // ------------------------------------
+                // Load the clk & word from the memory entry into the tail.
+                // Bump the current clk in the memory entry.
+                //
+                // The code is written to minimize split RMW
+                // ------------------------------------
+                movdqu xmm15, [Rq(TEMP_A)];
+                mov rdx, Rq(CLOCK_OR_SAVED_STACK_PTR);
+                add rdx, 1;
+
+                // Check if were in unconstrained mode.
+                mov rcx, QWORD [Rq(CONTEXT) + IS_UNCONSTRAINED_OFFSET];
+                cmp rcx, 1;
+                // unconstrained label is defined in each memory access
+                // instruction.
+                je >unconstrained;
+
+                // ------------------------------------
+                // Copy `MemValue` to trace buf.
+                // ------------------------------------
+                movdqu [Rq(TAIL_START)], xmm15;
+
+                // ------------------------------------
+                // Increment the num mem reads, since weve pushed into it.
+                // ------------------------------------
+                add Rq(NUM_MEM_READS), 1;
+                add Rq(TAIL_START), 16
+            }
+        }
+
+        // ------------------------------------
+        // When trace_mem_value finishes, the following registers
+        // are available for memory operations:
+        // * rax: offset within qword
+        // * rdx: new clock value
+        // * TEMP_A: MemValue address
+        // * xmm15: loaded MemValue content
+        // ------------------------------------
     }
 
     /// Write the start pc of the trace chunk.
