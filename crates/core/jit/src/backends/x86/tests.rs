@@ -2,7 +2,7 @@ use super::TranspilerBackend;
 use crate::{
     memory::AnonymousMemory, trace_capacity, ComputeInstructions, ControlFlowInstructions,
     Debuggable, JitContext, JitFunction, MemoryInstructions, MinimalTrace, RiscOperand,
-    RiscRegister, RiscvTranspiler, TraceChunkRaw,
+    RiscRegister, RiscvTranspiler, TraceChunkRaw, TraceCollector,
 };
 use memmap2::MmapMut;
 
@@ -1161,6 +1161,7 @@ mod memory {
         let mut backend = new_backend();
 
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X1, 0);
         backend.lw(RiscRegister::X1, RiscRegister::X1, 0);
         backend.inspect_register(RiscRegister::X1, assert_register_is!(5));
 
@@ -1172,6 +1173,7 @@ mod memory {
         let mut backend = new_backend();
 
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X1, 0);
         backend.lb(RiscRegister::X1, RiscRegister::X1, 0); // LB x1, 0(x1)
         backend.inspect_register(RiscRegister::X1, assert_register_is!(0xFFFFFFFFFFFFFF80)); // −128 sign-extended
 
@@ -1184,6 +1186,7 @@ mod memory {
         let mut backend = new_backend();
 
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X1, 0);
         backend.lbu(RiscRegister::X1, RiscRegister::X1, 0); // LBU x1, 0(x1)
         backend.inspect_register(RiscRegister::X1, assert_register_is!(0x00000080)); // 128 zero-extended
 
@@ -1195,6 +1198,7 @@ mod memory {
         let mut backend = new_backend();
 
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X1, 0);
         backend.lh(RiscRegister::X1, RiscRegister::X1, 0); // LH x1, 0(x1)
         backend.inspect_register(RiscRegister::X1, assert_register_is!(0xFFFFFFFFFFFF8000)); // −32768 sign-extended
 
@@ -1207,6 +1211,7 @@ mod memory {
         let mut backend = new_backend();
 
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X1, 0);
         backend.lhu(RiscRegister::X1, RiscRegister::X1, 0); // LHU x1, 0(x1)
         backend.inspect_register(RiscRegister::X1, assert_register_is!(0x00008000)); // 32768 zero-extended
 
@@ -1223,6 +1228,7 @@ mod memory {
 
         // Store 5 into memory[0]
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X0, 0);
         backend.sw(RiscRegister::X0, RiscRegister::X1, 0); // SW: m(rs1 + imm) = rs2
 
         run_test_and_check_memory(backend, |memory| {
@@ -1241,6 +1247,7 @@ mod memory {
 
         // SH: store 16-bit value at address 0
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X0, 0);
         backend.sh(RiscRegister::X0, RiscRegister::X1, 0);
 
         run_test_and_check_memory(backend, |memory| {
@@ -1259,6 +1266,7 @@ mod memory {
 
         // SB: store 8-bit value at address 0
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X0, 0);
         backend.sb(RiscRegister::X0, RiscRegister::X1, 0);
 
         run_test_and_check_memory(backend, |memory| {
@@ -1275,6 +1283,7 @@ mod memory {
         let mut backend = new_backend();
 
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X1, 0);
         backend.lhu(RiscRegister::X2, RiscRegister::X1, 0); // X1 == 0 by default
         backend.inspect_register(RiscRegister::X2, assert_register_is!(0x00001234));
 
@@ -1288,6 +1297,7 @@ mod memory {
         let mut backend = new_backend();
 
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X1, 2);
         backend.lhu(RiscRegister::X3, RiscRegister::X1, 2); // imm = 2 => second half-word
         backend.inspect_register(RiscRegister::X3, assert_register_is!(0x0000ABCD));
 
@@ -1300,6 +1310,7 @@ mod memory {
         let mut backend = new_backend();
 
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X1, 0);
         backend.lhu(RiscRegister::X1, RiscRegister::X1, 0);
         backend.inspect_register(RiscRegister::X1, assert_register_is!(0x00008000));
 
@@ -1312,6 +1323,7 @@ mod memory {
         let mut backend = new_backend();
 
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X1, 0);
         backend.lh(RiscRegister::X2, RiscRegister::X1, 0);
         backend.inspect_register(RiscRegister::X2, assert_register_is!(0xFFFFFFFFFFFFF234));
 
@@ -1324,6 +1336,7 @@ mod memory {
         let mut backend = new_backend();
 
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X1, 2);
         backend.lh(RiscRegister::X3, RiscRegister::X1, 2);
         backend.inspect_register(RiscRegister::X3, assert_register_is!(0xFFFFFFFFFFFF8000));
 
@@ -1356,6 +1369,7 @@ mod memory {
         let mut backend = new_backend();
 
         backend.start_instr();
+        backend.trace_mem_value(RiscRegister::X0, 0);
         backend.ld(RiscRegister::X1, RiscRegister::X0, 0);
         backend.inspect_register(RiscRegister::X1, assert_register_is!(0xDEADBEEFCAFEBABE));
 
@@ -1370,6 +1384,7 @@ mod memory {
         // Load base address 8 into X2
         backend.add(RiscRegister::X2, RiscOperand::Immediate(8), RiscOperand::Immediate(0));
         // Load doubleword from address X2 + 8 (= 16)
+        backend.trace_mem_value(RiscRegister::X2, 8);
         backend.ld(RiscRegister::X1, RiscRegister::X2, 8);
         backend.inspect_register(RiscRegister::X1, assert_register_is!(0x1234567890ABCDEF));
 
@@ -1397,6 +1412,7 @@ mod memory {
             RiscOperand::Register(RiscRegister::X1),
             RiscOperand::Immediate(0x76543210u32 as i32),
         );
+        backend.trace_mem_value(RiscRegister::X0, 0);
         backend.sd(RiscRegister::X0, RiscRegister::X1, 0);
 
         run_test_and_check_memory(backend, |memory| {
@@ -1418,6 +1434,7 @@ mod memory {
             RiscOperand::Immediate(0x12345678),
             RiscOperand::Immediate(0x12345678),
         );
+        backend.trace_mem_value(RiscRegister::X2, 16);
         backend.sd(RiscRegister::X2, RiscRegister::X1, 16);
 
         run_test_and_check_memory(backend, |memory| {
@@ -1432,6 +1449,7 @@ mod memory {
 
         backend.start_instr();
         // LWU loads 32-bit value and zero-extends to 64 bits
+        backend.trace_mem_value(RiscRegister::X0, 0);
         backend.lwu(RiscRegister::X1, RiscRegister::X0, 0);
         backend.inspect_register(RiscRegister::X1, assert_register_is!(0x00000000FFFFFFFF));
 
@@ -1446,6 +1464,7 @@ mod memory {
         // Set base address
         backend.add(RiscRegister::X2, RiscOperand::Immediate(4), RiscOperand::Immediate(0));
         // Load unsigned word from X2 + 4 (= 8)
+        backend.trace_mem_value(RiscRegister::X2, 4);
         backend.lwu(RiscRegister::X1, RiscRegister::X2, 4);
         backend.inspect_register(RiscRegister::X1, assert_register_is!(0x0000000080000000));
 
@@ -1458,10 +1477,12 @@ mod memory {
 
         backend.start_instr();
         // LW sign-extends negative values
+        backend.trace_mem_value(RiscRegister::X0, 0);
         backend.lw(RiscRegister::X1, RiscRegister::X0, 0);
         backend.inspect_register(RiscRegister::X1, assert_register_is!(0xFFFFFFFF80000000));
 
         // LWU zero-extends the same value
+        backend.trace_mem_value(RiscRegister::X0, 0);
         backend.lwu(RiscRegister::X2, RiscRegister::X0, 0);
         backend.inspect_register(RiscRegister::X2, assert_register_is!(0x0000000080000000));
 
@@ -1522,11 +1543,13 @@ mod trace {
 
         // Do a store into addr = 0, and trace it.
         backend.add(RiscRegister::X1, RiscOperand::Immediate(5), RiscOperand::Immediate(0));
+        backend.trace_mem_value(RiscRegister::X0, 0);
         backend.sw(RiscRegister::X0, RiscRegister::X1, 0);
         backend.trace_mem_value(RiscRegister::X0, 0);
 
         // Do a store into addr = 8, and trace it.
         backend.add(RiscRegister::X2, RiscOperand::Immediate(10), RiscOperand::Immediate(0));
+        backend.trace_mem_value(RiscRegister::X0, 8);
         backend.sw(RiscRegister::X0, RiscRegister::X2, 8);
 
         // Bump the clk by 8.
@@ -1534,6 +1557,8 @@ mod trace {
         backend.trace_mem_value(RiscRegister::X0, 8);
         // The last trace call should have bumped the clk by 8.
         backend.trace_mem_value(RiscRegister::X0, 8);
+        // A placeholder instruction so trace_mem_value would work.
+        backend.lw(RiscRegister::X0, RiscRegister::X0, 0);
 
         backend.call_extern_fn(some_precompile);
 
@@ -1552,22 +1577,26 @@ mod trace {
         assert_eq!(registers[1], 5);
         assert_eq!(registers[2], 10);
         assert_eq!(pc, 103);
-        assert_eq!(mem_reads, 5);
+        assert_eq!(mem_reads, 7);
 
         let mem_reads = trace.mem_reads().collect::<Vec<_>>();
 
         // Check the values.
-        assert_eq!(mem_reads[0].value, 5);
-        assert_eq!(mem_reads[1].value, 10);
-        assert_eq!(mem_reads[2].value, 10);
-        assert_eq!(mem_reads[3].value, 15);
-        assert_eq!(mem_reads[4].value, 20);
+        assert_eq!(mem_reads[0].value, 0);
+        assert_eq!(mem_reads[1].value, 5);
+        assert_eq!(mem_reads[2].value, 0);
+        assert_eq!(mem_reads[3].value, 10);
+        assert_eq!(mem_reads[4].value, 10);
+        assert_eq!(mem_reads[5].value, 15);
+        assert_eq!(mem_reads[6].value, 20);
 
         // Check the clks.
         assert_eq!(mem_reads[0].clk, 0);
-        assert_eq!(mem_reads[1].clk, 0);
-        assert_eq!(mem_reads[2].clk, 10);
-        assert_eq!(mem_reads[3].clk, 5);
-        assert_eq!(mem_reads[4].clk, 10);
+        assert_eq!(mem_reads[1].clk, 2);
+        assert_eq!(mem_reads[2].clk, 0);
+        assert_eq!(mem_reads[3].clk, 2);
+        assert_eq!(mem_reads[4].clk, 2);
+        assert_eq!(mem_reads[5].clk, 5);
+        assert_eq!(mem_reads[6].clk, 10);
     }
 }
