@@ -240,17 +240,6 @@ impl TraceCollector for TranspilerBackend {
 
         // Load the value, assumed to be of a memory read, into TEMP_A.
         self.emit_risc_operand_load(rs1.into(), TEMP_A);
-
-        dynasm! {
-            self;
-            .arch x64;
-
-            // Check if were in unconstrained mode.
-            mov rcx, QWORD [Rq(CONTEXT) + IS_UNCONSTRAINED_OFFSET];
-            cmp rcx, 1;
-            je >done
-        }
-
         // ------------------------------------
         // Compute the address to load from.
         // ------------------------------------
@@ -259,6 +248,12 @@ impl TraceCollector for TranspilerBackend {
         dynasm! {
             self;
             .arch x64;
+
+            // ------------------------------------
+            // Keep offset in rax, actually impl will use it.
+            // ------------------------------------
+            mov rax, Rq(TEMP_A);
+            and rax, 7;
 
             // ------------------------------------
             // Align to the start of the word.
@@ -278,18 +273,35 @@ impl TraceCollector for TranspilerBackend {
             // The code is written to minimize split RMW
             // ------------------------------------
             movdqu xmm15, [Rq(TEMP_A)];
-            movdqu [Rq(TAIL_START)], xmm15;
             mov rdx, Rq(CLOCK_OR_SAVED_STACK_PTR);
             add rdx, 1;
-            mov [Rq(TEMP_A)], rdx;
+
+            // Check if were in unconstrained mode.
+            mov rcx, QWORD [Rq(CONTEXT) + IS_UNCONSTRAINED_OFFSET];
+            cmp rcx, 1;
+            // unconstrained label is defined in each memory access
+            // instruction.
+            je >unconstrained;
+
+            // ------------------------------------
+            // Copy `MemValue` to trace buf.
+            // ------------------------------------
+            movdqu [Rq(TAIL_START)], xmm15;
 
             // ------------------------------------
             // Increment the num mem reads, since weve pushed into it.
             // ------------------------------------
             add Rq(NUM_MEM_READS), 1;
-            add Rq(TAIL_START), 16;
+            add Rq(TAIL_START), 16
 
-            done:
+            // ------------------------------------
+            // When trace_mem_value finishes, the following registers
+            // are available for memory operations:
+            // * rax: offset within qword
+            // * rdx: new clock value
+            // * TEMP_A: MemValue address
+            // * xmm15: loaded MemValue content
+            // ------------------------------------
         }
     }
 
