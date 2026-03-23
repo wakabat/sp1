@@ -87,40 +87,13 @@ impl JitArtifact {
     /// The code is mapped into executable memory and the jump table is reconstructed.
     #[cfg(sp1_native_executor_available)]
     pub fn into_jit_function<M: crate::JitMemory>(self) -> io::Result<crate::JitFunction<M>> {
-        use memmap2::MmapOptions;
-
-        // Map the code into executable memory.
-        let mut mmap = MmapOptions::new().len(self.code.len()).map_anon()?;
-        mmap.copy_from_slice(&self.code);
-        let exec = mmap.make_exec().map_err(|e| {
-            io::Error::new(io::ErrorKind::PermissionDenied, format!("mmap make_exec: {e}"))
-        })?;
-
-        let base = exec.as_ptr();
-        let jump_table: Vec<*const u8> = self
-            .jump_table_offsets
-            .iter()
-            .map(|&off| unsafe { base.add(off as usize) })
-            .collect();
-
-        let memory = M::new(self.memory_size as usize);
-
-        Ok(crate::JitFunction {
+        let jump_table = self.jump_table_offsets.iter().map(|&off| off as usize).collect();
+        crate::JitFunction::from_bytes(
+            self.code,
             jump_table,
-            code: crate::ExecutableCode::Mmap(exec),
-            memory,
-            pc: self.pc_start,
-            pc_start: self.pc_start,
-            clk: 1,
-            global_clk: 0,
-            registers: [0; 32],
-            initial_memory_image: std::sync::Arc::new(hashbrown::HashMap::new()),
-            input_buffer: std::collections::VecDeque::new(),
-            hints: Vec::new(),
-            public_values_stream: Vec::new(),
-            debug_sender: None,
-            exit_code: 0,
-        })
+            self.memory_size as usize,
+            self.pc_start,
+        )
     }
 
     /// Write the artifact as an ELF object file with DWARF debug line info.

@@ -13,7 +13,6 @@ pub mod memory;
 pub mod risc;
 pub mod shm;
 
-use dynasmrt::ExecutableBuffer;
 use hashbrown::HashMap;
 use std::{
     collections::VecDeque,
@@ -196,29 +195,18 @@ pub struct JitFunction<M> {
     _marker: std::marker::PhantomData<M>,
 }
 
-/// Holds the executable code, either from a fresh JIT compilation or from cached bytes.
+/// Holds the executable code in an executable memory mapping.
 #[cfg(sp1_native_executor_available)]
-pub enum ExecutableCode {
-    /// Code produced directly by dynasmrt.
-    Dynasm(ExecutableBuffer),
-    /// Code loaded from cache into an executable mmap.
-    Mmap(memmap2::Mmap),
-}
+pub struct ExecutableCode(memmap2::Mmap);
 
 #[cfg(sp1_native_executor_available)]
 impl ExecutableCode {
     fn as_ptr(&self) -> *const u8 {
-        match self {
-            Self::Dynasm(buf) => buf.as_ptr(),
-            Self::Mmap(mmap) => mmap.as_ptr(),
-        }
+        self.0.as_ptr()
     }
 
     fn len(&self) -> usize {
-        match self {
-            Self::Dynasm(buf) => buf.len(),
-            Self::Mmap(mmap) => mmap.len(),
-        }
+        self.0.len()
     }
 }
 
@@ -258,16 +246,27 @@ unsafe impl<M: Send> Send for JitFunction<M> {}
 
 #[cfg(sp1_native_executor_available)]
 impl<M: JitMemory> JitFunction<M> {
-    pub(crate) fn new(
-        code: ExecutableBuffer,
+    /// Create a `JitFunction` from raw code bytes and a jump table of offsets.
+    ///
+    /// The bytes are copied into an executable memory mapping. The jump table
+    /// entries are interpreted as byte offsets into the code and are converted
+    /// to absolute pointers.
+    pub(crate) fn from_bytes(
+        code: Vec<u8>,
         jump_table: Vec<usize>,
         memory_size: usize,
         pc_start: u64,
     ) -> std::io::Result<Self> {
-        let code = ExecutableCode::Dynasm(code);
+        use memmap2::MmapOptions;
 
-        // Adjust the jump table to be absolute addresses.
-        let buf_ptr = code.as_ptr();
+        // Map the code into executable memory.
+        let mut mmap = MmapOptions::new().len(code.len()).map_anon()?;
+        mmap.copy_from_slice(&code);
+        let exec = mmap.make_exec().map_err(|e| {
+            io::Error::new(io::ErrorKind::PermissionDenied, format!("mmap make_exec: {e}"))
+        })?;
+
+        let buf_ptr = exec.as_ptr();
         let jump_table =
             jump_table.into_iter().map(|offset| unsafe { buf_ptr.add(offset) }).collect();
 
@@ -275,7 +274,7 @@ impl<M: JitMemory> JitFunction<M> {
 
         Ok(Self {
             jump_table,
-            code,
+            code: ExecutableCode(exec),
             memory,
             pc: pc_start,
             clk: 1,

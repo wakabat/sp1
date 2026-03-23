@@ -7,8 +7,8 @@ use crate::{
 };
 use dynasmrt::{
     dynasm,
-    x64::{Assembler, Rq},
-    DynasmApi,
+    x64::{Rq, X64Relocation},
+    DynasmApi, VecAssembler,
 };
 use std::io;
 
@@ -29,7 +29,7 @@ impl RiscvTranspiler for TranspilerBackend {
         }
 
         let mut this = Self {
-            inner: Assembler::new()?,
+            inner: VecAssembler::<X64Relocation>::new(0),
             jump_table: Vec::with_capacity(program_size),
             memory_size,
             has_instructions: false,
@@ -120,9 +120,9 @@ impl RiscvTranspiler for TranspilerBackend {
 
         let code = self.inner.finalize().expect("failed to finalize x86 backend");
 
-        debug_assert!(code.size() > 0, "Got empty x86 code buffer");
+        debug_assert!(!code.is_empty(), "Got empty x86 code buffer");
 
-        JitFunction::new(code, self.jump_table, self.memory_size, self.pc_start)
+        JitFunction::from_bytes(code, self.jump_table, self.memory_size, self.pc_start)
     }
 
     fn call_extern_fn(&mut self, fn_ptr: ExternFn) {
@@ -178,10 +178,10 @@ impl TranspilerBackend {
         let clk_bump = self.clk_bump;
 
         let code = self.inner.finalize().expect("failed to finalize x86 backend");
-        debug_assert!(code.size() > 0, "Got empty x86 code buffer");
+        debug_assert!(!code.is_empty(), "Got empty x86 code buffer");
 
         let func: JitFunction<M> =
-            JitFunction::new(code, self.jump_table, self.memory_size, self.pc_start)?;
+            JitFunction::from_bytes(code, self.jump_table, self.memory_size, self.pc_start)?;
         let artifact =
             func.to_artifact(instr_map, pc_base, max_trace_size, clk_bump, has_host_calls);
         Ok((func, artifact))
