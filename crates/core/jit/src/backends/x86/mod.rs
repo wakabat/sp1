@@ -5,8 +5,8 @@ use crate::{
 };
 use dynasmrt::{
     dynasm,
-    x64::{Assembler, Rq},
-    DynasmApi, DynasmLabelApi,
+    x64::{Rq, X64Relocation},
+    DynasmApi, DynasmLabelApi, VecAssembler,
 };
 use std::{
     mem::offset_of,
@@ -63,7 +63,7 @@ const REGISTERS_OFFSET: i32 = offset_of!(JitContext, registers) as i32;
 /// The x86 backend for JIT transpipling RISC-V instructions to x86-64, according to the
 /// [crate::SP1RiscvTranspiler] trait.
 pub struct TranspilerBackend {
-    inner: Assembler,
+    inner: VecAssembler<X64Relocation>,
     /// A mapping of pc - pc_base => offset in the code buffer.
     jump_table: Vec<usize>,
     /// The size of the memory buffer to allocate.
@@ -626,7 +626,7 @@ impl TranspilerBackend {
 }
 
 impl Deref for TranspilerBackend {
-    type Target = Assembler;
+    type Target = VecAssembler<X64Relocation>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner

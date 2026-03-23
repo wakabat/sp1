@@ -13,7 +13,6 @@ pub mod memory;
 pub mod risc;
 pub mod shm;
 
-use dynasmrt::ExecutableBuffer;
 use hashbrown::HashMap;
 use memmap2::Mmap;
 use std::{
@@ -197,20 +196,14 @@ pub struct JitFunction<M> {
     _marker: std::marker::PhantomData<M>,
 }
 
-/// Storage for JIT-compiled code, supporting both dynamic assembly and cached/AOT code.
+/// Storage for JIT-compiled executable code backed by an mmap.
 #[cfg(sp1_native_executor_available)]
-enum CodeStorage {
-    Dynasm(ExecutableBuffer),
-    Cached(Mmap),
-}
+struct CodeStorage(Mmap);
 
 #[cfg(sp1_native_executor_available)]
 impl CodeStorage {
     fn as_ptr(&self) -> *const u8 {
-        match self {
-            CodeStorage::Dynasm(buf) => buf.as_ptr(),
-            CodeStorage::Cached(mmap) => mmap.as_ptr(),
-        }
+        self.0.as_ptr()
     }
 }
 
@@ -250,33 +243,14 @@ unsafe impl<M: Send> Send for JitFunction<M> {}
 
 #[cfg(sp1_native_executor_available)]
 impl<M: JitMemory> JitFunction<M> {
-    pub(crate) fn new(
-        code: ExecutableBuffer,
-        jump_table: Vec<usize>,
-        memory_size: usize,
-        pc_start: u64,
-    ) -> std::io::Result<Self> {
-        let code = CodeStorage::Dynasm(code);
-        Self::from_code_storage(code, jump_table, memory_size, pc_start)
-    }
-
-    /// Construct a `JitFunction` from cached/AOT code loaded into an executable mmap.
+    /// Construct a `JitFunction` from code loaded into an executable mmap.
     pub fn from_cached(
         mmap: Mmap,
         jump_table: Vec<usize>,
         memory_size: usize,
         pc_start: u64,
     ) -> std::io::Result<Self> {
-        let code = CodeStorage::Cached(mmap);
-        Self::from_code_storage(code, jump_table, memory_size, pc_start)
-    }
-
-    fn from_code_storage(
-        code: CodeStorage,
-        jump_table: Vec<usize>,
-        memory_size: usize,
-        pc_start: u64,
-    ) -> std::io::Result<Self> {
+        let code = CodeStorage(mmap);
         let buf_ptr = code.as_ptr();
         let jump_table =
             jump_table.into_iter().map(|offset| unsafe { buf_ptr.add(offset) }).collect();
