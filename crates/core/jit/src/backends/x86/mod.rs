@@ -86,6 +86,9 @@ pub struct TranspilerBackend {
     may_early_exit: bool,
     /// The amount to bump the clk by each cycle.
     clk_bump: u64,
+    /// Offsets in the code buffer where 8-byte function pointer immediates reside.
+    /// Used for relocation when loading cached/AOT code.
+    fn_relocations: Vec<usize>,
 }
 
 impl TraceCollector for TranspilerBackend {
@@ -505,10 +508,10 @@ impl TranspilerBackend {
             mov Rq(SAVED_STACK_PTR), rsp;
 
             // Align the stack to 16 bytes for the call
-            lea rsp, [rsp - 8]; // sub 8 from the rsp
-            mov rax, rsp; // copy
-            and rax, 15; // compute rsp % 16
-            sub rsp, rax; // sub that from the rsp to ensure 16 byte alignment
+            lea rsp, [rsp - 8];
+            mov rax, rsp;
+            and rax, 15;
+            sub rsp, rax;
 
             // Call the external function
             mov rax, QWORD fn_ptr as _;
@@ -517,6 +520,15 @@ impl TranspilerBackend {
             // Restore the original stack pointer
             mov rsp, Rq(SAVED_STACK_PTR)
         }
+
+        // Record the offset of the 8-byte immediate in the "mov rax, QWORD fn_ptr"
+        // we just emitted. Working backward from the current offset:
+        //   mov rsp, Rq(SAVED_STACK_PTR) = 3 bytes  (4C 89 FC)
+        //   call rax                     = 2 bytes  (FF D0)
+        //   8-byte immediate             = 8 bytes
+        // So the immediate starts at: current_offset - 3 - 2 - 8 = current_offset - 13
+        let code_offset = self.inner.offset().0;
+        self.fn_relocations.push(code_offset - 13);
 
         self.load_registers_from_context();
     }

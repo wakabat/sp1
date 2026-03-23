@@ -2,8 +2,8 @@
 
 use super::{TranspilerBackend, CONTEXT};
 use crate::{
-    DebugFn, EcallHandler, ExternFn, JitFunction, JitMemory, RiscOperand, RiscRegister,
-    RiscvTranspiler,
+    cache::JitCache, DebugFn, EcallHandler, ExternFn, JitFunction, JitMemory, RiscOperand,
+    RiscRegister, RiscvTranspiler,
 };
 use dynasmrt::{
     dynasm,
@@ -42,6 +42,7 @@ impl RiscvTranspiler for TranspilerBackend {
             clk_bump,
             max_trace_size,
             may_early_exit: false,
+            fn_relocations: Vec::new(),
         };
 
         // Handle calling conventions and save anything were gonna clobber.
@@ -136,5 +137,27 @@ impl RiscvTranspiler for TranspilerBackend {
         }
 
         self.call_extern_fn_raw(handler as _);
+    }
+}
+
+impl TranspilerBackend {
+    /// Finalize the transpiler and return a [`JitCache`] that can be saved and reloaded.
+    ///
+    /// The cache contains the raw machine code bytes, jump table offsets, and
+    /// relocation information needed to reconstruct a [`JitFunction`] later.
+    pub fn finalize_to_cache(mut self) -> JitCache {
+        self.epilogue();
+
+        let code = self.inner.finalize().expect("failed to finalize x86 backend");
+
+        debug_assert!(code.size() > 0, "Got empty x86 code buffer");
+
+        JitCache {
+            code: code[..].to_vec(),
+            jump_table_offsets: self.jump_table,
+            memory_size: self.memory_size,
+            pc_start: self.pc_start,
+            fn_relocations: self.fn_relocations,
+        }
     }
 }

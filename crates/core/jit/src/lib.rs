@@ -4,6 +4,7 @@
 compile_error!("This crate is only supported on little endian targets.");
 
 pub mod backends;
+pub mod cache;
 pub mod context;
 pub mod debug;
 pub mod instructions;
@@ -14,6 +15,7 @@ pub mod shm;
 
 use dynasmrt::ExecutableBuffer;
 use hashbrown::HashMap;
+use memmap2::Mmap;
 use std::{
     collections::VecDeque,
     io,
@@ -24,6 +26,7 @@ use std::{
 };
 
 pub use backends::*;
+pub use cache::*;
 pub use context::*;
 pub use instructions::*;
 pub use risc::*;
@@ -194,13 +197,30 @@ pub struct JitFunction<M> {
     _marker: std::marker::PhantomData<M>,
 }
 
+/// Storage for JIT-compiled code, supporting both dynamic assembly and cached/AOT code.
+#[cfg(sp1_native_executor_available)]
+enum CodeStorage {
+    Dynasm(ExecutableBuffer),
+    Cached(Mmap),
+}
+
+#[cfg(sp1_native_executor_available)]
+impl CodeStorage {
+    fn as_ptr(&self) -> *const u8 {
+        match self {
+            CodeStorage::Dynasm(buf) => buf.as_ptr(),
+            CodeStorage::Cached(mmap) => mmap.as_ptr(),
+        }
+    }
+}
+
 /// A type representing a JIT compiled function.
 ///
 /// The underlying function should be of the form [`fn(*mut JitContext)`].
 #[cfg(sp1_native_executor_available)]
 pub struct JitFunction<M> {
     jump_table: Vec<*const u8>,
-    code: ExecutableBuffer,
+    code: CodeStorage,
 
     /// The initial memory image.
     initial_memory_image: Arc<HashMap<u64, u64>>,
@@ -236,7 +256,27 @@ impl<M: JitMemory> JitFunction<M> {
         memory_size: usize,
         pc_start: u64,
     ) -> std::io::Result<Self> {
-        // Adjust the jump table to be absolute addresses.
+        let code = CodeStorage::Dynasm(code);
+        Self::from_code_storage(code, jump_table, memory_size, pc_start)
+    }
+
+    /// Construct a `JitFunction` from cached/AOT code loaded into an executable mmap.
+    pub fn from_cached(
+        mmap: Mmap,
+        jump_table: Vec<usize>,
+        memory_size: usize,
+        pc_start: u64,
+    ) -> std::io::Result<Self> {
+        let code = CodeStorage::Cached(mmap);
+        Self::from_code_storage(code, jump_table, memory_size, pc_start)
+    }
+
+    fn from_code_storage(
+        code: CodeStorage,
+        jump_table: Vec<usize>,
+        memory_size: usize,
+        pc_start: u64,
+    ) -> std::io::Result<Self> {
         let buf_ptr = code.as_ptr();
         let jump_table =
             jump_table.into_iter().map(|offset| unsafe { buf_ptr.add(offset) }).collect();

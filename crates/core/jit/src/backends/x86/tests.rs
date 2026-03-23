@@ -1515,3 +1515,200 @@ mod trace {
         assert_eq!(mem_reads[4].clk, 10);
     }
 }
+
+mod cache {
+    use super::*;
+    use crate::{cache::JitCache, SystemInstructions};
+
+    fn new_backend_no_trace() -> TranspilerBackend {
+        TranspilerBackend::new(0, 1024 * 2, 0, 100, 100, 8).unwrap()
+    }
+
+    #[test]
+    fn test_cache_roundtrip_basic() {
+        let mut backend = new_backend_no_trace();
+
+        backend.start_instr();
+        backend.add(RiscRegister::X5, RiscOperand::Immediate(5), RiscOperand::Immediate(10));
+        backend.end_instr();
+
+        let cache = backend.finalize_to_cache();
+
+        assert!(!cache.code.is_empty());
+        assert!(!cache.jump_table_offsets.is_empty());
+
+        // No ecall was emitted, so there should be no relocations
+        assert!(cache.fn_relocations.is_empty());
+
+        // Load from cache (with a dummy ecall handler since none are used)
+        extern "C" fn dummy_ecall(_: *mut JitContext) -> u64 {
+            0
+        }
+        let mut func: JitFunction<AnonymousMemory> =
+            cache.load(dummy_ecall).expect("Failed to load from cache");
+
+        // The function should work and registers should have the expected value
+        unsafe {
+            func.call(std::ptr::null_mut());
+        }
+        assert_eq!(func.registers[5], 15);
+    }
+
+    #[test]
+    fn test_cache_with_ecall_relocation() {
+        extern "C" fn test_ecall(ctx: *mut JitContext) -> u64 {
+            let ctx = unsafe { &mut *ctx };
+            ctx.pc = 1; // halt
+            42
+        }
+
+        let mut backend = TranspilerBackend::new(2, 1024 * 2, 0, 100, 100, 8).unwrap();
+        backend.register_ecall_handler(test_ecall);
+
+        backend.start_instr();
+        backend.add(RiscRegister::X5, RiscOperand::Immediate(100), RiscOperand::Immediate(0));
+        backend.end_instr();
+
+        backend.start_instr();
+        backend.ecall();
+        backend.end_instr();
+
+        let cache = backend.finalize_to_cache();
+
+        // There should be exactly one relocation (from the ecall)
+        assert_eq!(cache.fn_relocations.len(), 1);
+
+        // Load from cache with the SAME ecall handler
+        let mut func: JitFunction<AnonymousMemory> =
+            cache.load(test_ecall).expect("Failed to load from cache");
+
+        unsafe {
+            func.call(std::ptr::null_mut());
+        }
+        assert_eq!(func.registers[5], 42);
+        assert_eq!(func.pc, 1);
+    }
+
+    #[test]
+    fn test_cache_with_different_ecall_handler() {
+        extern "C" fn original_ecall(ctx: *mut JitContext) -> u64 {
+            let ctx = unsafe { &mut *ctx };
+            ctx.pc = 1;
+            100
+        }
+        extern "C" fn replacement_ecall(ctx: *mut JitContext) -> u64 {
+            let ctx = unsafe { &mut *ctx };
+            ctx.pc = 1;
+            200
+        }
+
+        let mut backend = TranspilerBackend::new(2, 1024 * 2, 0, 100, 100, 8).unwrap();
+        backend.register_ecall_handler(original_ecall);
+
+        backend.start_instr();
+        backend.add(RiscRegister::X5, RiscOperand::Immediate(100), RiscOperand::Immediate(0));
+        backend.end_instr();
+
+        backend.start_instr();
+        backend.ecall();
+        backend.end_instr();
+
+        let cache = backend.finalize_to_cache();
+
+        // Load with a DIFFERENT ecall handler - relocation should patch it
+        let mut func: JitFunction<AnonymousMemory> =
+            cache.load(replacement_ecall).expect("Failed to load from cache");
+
+        unsafe {
+            func.call(std::ptr::null_mut());
+        }
+        assert_eq!(func.registers[5], 200);
+    }
+
+    #[test]
+    fn test_cache_serde_roundtrip() {
+        let mut backend = new_backend_no_trace();
+
+        backend.start_instr();
+        backend.add(RiscRegister::X5, RiscOperand::Immediate(7), RiscOperand::Immediate(3));
+        backend.end_instr();
+
+        let cache = backend.finalize_to_cache();
+
+        let serialized = bincode::serialize(&cache).unwrap();
+        let deserialized: JitCache = bincode::deserialize(&serialized).unwrap();
+
+        assert_eq!(cache.code, deserialized.code);
+        assert_eq!(cache.jump_table_offsets, deserialized.jump_table_offsets);
+        assert_eq!(cache.memory_size, deserialized.memory_size);
+        assert_eq!(cache.pc_start, deserialized.pc_start);
+        assert_eq!(cache.fn_relocations, deserialized.fn_relocations);
+
+        extern "C" fn dummy_ecall(_: *mut JitContext) -> u64 {
+            0
+        }
+        let mut func: JitFunction<AnonymousMemory> =
+            deserialized.load(dummy_ecall).expect("Failed to load from deserialized cache");
+
+        unsafe {
+            func.call(std::ptr::null_mut());
+        }
+        assert_eq!(func.registers[5], 10);
+    }
+
+    #[test]
+    fn test_generate_aot_source() {
+        let mut backend = new_backend_no_trace();
+
+        backend.start_instr();
+        backend.add(RiscRegister::X5, RiscOperand::Immediate(1), RiscOperand::Immediate(2));
+        backend.end_instr();
+
+        let cache = backend.finalize_to_cache();
+        let source = cache.generate_aot_source();
+
+        assert!(source.contains("pub static CODE:"));
+        assert!(source.contains("pub static JUMP_TABLE_OFFSETS:"));
+        assert!(source.contains("pub static FN_RELOCATIONS:"));
+        assert!(source.contains("pub const MEMORY_SIZE:"));
+        assert!(source.contains("pub const PC_START:"));
+    }
+
+    #[test]
+    fn test_cache_load_static() {
+        extern "C" fn test_ecall(ctx: *mut JitContext) -> u64 {
+            let ctx = unsafe { &mut *ctx };
+            ctx.pc = 1;
+            99
+        }
+
+        let mut backend = TranspilerBackend::new(2, 1024 * 2, 0, 100, 100, 8).unwrap();
+        backend.register_ecall_handler(test_ecall);
+
+        backend.start_instr();
+        backend.add(RiscRegister::X5, RiscOperand::Immediate(100), RiscOperand::Immediate(0));
+        backend.end_instr();
+
+        backend.start_instr();
+        backend.ecall();
+        backend.end_instr();
+
+        let cache = backend.finalize_to_cache();
+
+        // Simulate AOT loading from static data
+        let mut func: JitFunction<AnonymousMemory> = JitCache::load_static(
+            &cache.code,
+            &cache.jump_table_offsets,
+            &cache.fn_relocations,
+            cache.memory_size,
+            cache.pc_start,
+            test_ecall,
+        )
+        .expect("Failed to load from static data");
+
+        unsafe {
+            func.call(std::ptr::null_mut());
+        }
+        assert_eq!(func.registers[5], 99);
+    }
+}

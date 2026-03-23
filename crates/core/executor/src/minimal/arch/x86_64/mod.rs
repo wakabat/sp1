@@ -3,8 +3,9 @@
 use crate::{memory::MAX_LOG_ADDR, Instruction, Opcode, Program, Register, HALT_PC};
 use memmap2::MmapMut;
 use sp1_jit::{
-    debug, memory::AnonymousMemory, trace_capacity, DebugBackend, JitFunction, JitMemory, MemValue,
-    RiscOperand, RiscRegister, RiscvTranspiler, TraceChunkRaw, TranspilerBackend,
+    cache::JitCache, debug, memory::AnonymousMemory, trace_capacity, DebugBackend, JitFunction,
+    JitMemory, MemValue, RiscOperand, RiscRegister, RiscvTranspiler, TraceChunkRaw,
+    TranspilerBackend,
 };
 use std::{
     collections::VecDeque,
@@ -48,6 +49,33 @@ impl MinimalExecutor {
             max_trace_size,
         );
         let mut compiled = transpiler.transpile(program.as_ref());
+        compiled.with_initial_memory_image(program.memory_image.clone());
+
+        Self {
+            program,
+            compiled,
+            input: VecDeque::new(),
+            trace_buf_size: trace_capacity(max_trace_size),
+        }
+    }
+
+    /// Create a new minimal executor from a [`JitCache`], skipping transpilation.
+    ///
+    /// # Arguments
+    ///
+    /// * `program` - The program (used for memory image and metadata).
+    /// * `cache` - A previously saved JIT compilation result.
+    /// * `max_trace_size` - The maximum trace size in terms of [`MemValue`]s.
+    #[must_use]
+    pub fn from_cache(
+        program: Arc<Program>,
+        cache: &JitCache,
+        max_trace_size: Option<u64>,
+    ) -> Self {
+        tracing::debug!("loading JIT from cache, max_trace_size={max_trace_size:?}");
+
+        let mut compiled: JitFunction<AnonymousMemory> =
+            cache.load(crate::minimal::ecall::sp1_ecall_handler).expect("Failed to load JIT cache");
         compiled.with_initial_memory_image(program.memory_image.clone());
 
         Self {
@@ -317,11 +345,34 @@ impl MinimalTranspiler {
         }
     }
 
-    fn transpile_instructions<B: RiscvTranspiler, M: JitMemory>(
-        &self,
-        mut backend: B,
-        program: &Program,
-    ) -> JitFunction<M> {
+    /// Transpile the program into a [`JitCache`] that can be saved and reloaded.
+    ///
+    /// Debug mode is not supported with caching.
+    #[tracing::instrument(
+        name = "MinimalTranspiler::transpile_to_cache",
+        level = "debug",
+        skip(program)
+    )]
+    pub fn transpile_to_cache(&self, program: &Program) -> JitCache {
+        assert!(!self.is_debug, "JIT cache is not supported in debug mode");
+
+        let mut backend = TranspilerBackend::new(
+            program.instructions.len(),
+            self.memory_buffer_size(),
+            self.max_trace_size,
+            program.pc_start_abs,
+            program.pc_base,
+            8,
+        )
+        .expect("Failed to create transpiler backend");
+
+        backend.register_ecall_handler(crate::minimal::ecall::sp1_ecall_handler);
+
+        self.emit_instructions(&mut backend, program);
+        backend.finalize_to_cache()
+    }
+
+    fn emit_instructions<B: RiscvTranspiler>(&self, backend: &mut B, program: &Program) {
         for instruction in program.instructions.iter() {
             backend.start_instr();
 
@@ -333,10 +384,10 @@ impl MinimalTranspiler {
                 | Opcode::LHU
                 | Opcode::LD
                 | Opcode::LWU => {
-                    self.transpile_load_instruction(&mut backend, instruction);
+                    self.transpile_load_instruction(backend, instruction);
                 }
                 Opcode::SB | Opcode::SH | Opcode::SW | Opcode::SD => {
-                    self.transpile_store_instruction(&mut backend, instruction);
+                    self.transpile_store_instruction(backend, instruction);
                 }
                 Opcode::BEQ
                 | Opcode::BNE
@@ -344,10 +395,10 @@ impl MinimalTranspiler {
                 | Opcode::BGE
                 | Opcode::BLTU
                 | Opcode::BGEU => {
-                    Self::transpile_branch_instruction(&mut backend, instruction);
+                    Self::transpile_branch_instruction(backend, instruction);
                 }
                 Opcode::JAL | Opcode::JALR => {
-                    Self::transpile_jump_instruction(&mut backend, instruction);
+                    Self::transpile_jump_instruction(backend, instruction);
                 }
                 Opcode::ADD
                 | Opcode::ADDI
@@ -380,7 +431,7 @@ impl MinimalTranspiler {
                 | Opcode::REMW
                     if instruction.is_alu_instruction() =>
                 {
-                    Self::transpile_alu_instruction(&mut backend, instruction);
+                    Self::transpile_alu_instruction(backend, instruction);
                 }
                 Opcode::AUIPC => {
                     let (rd, imm) = instruction.u_type();
@@ -401,7 +452,14 @@ impl MinimalTranspiler {
 
             backend.end_instr();
         }
+    }
 
+    fn transpile_instructions<B: RiscvTranspiler, M: JitMemory>(
+        &self,
+        mut backend: B,
+        program: &Program,
+    ) -> JitFunction<M> {
+        self.emit_instructions(&mut backend, program);
         backend.finalize().expect("Failed to finalize function")
     }
 
