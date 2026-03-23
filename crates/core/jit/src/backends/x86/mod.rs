@@ -1,7 +1,8 @@
 #![allow(clippy::fn_to_numeric_cast)]
 
 use crate::{
-    EcallHandler, JitContext, RiscOperand, RiscRegister, TraceChunkHeader, TraceCollector,
+    cache::InstrMapEntry, EcallHandler, JitContext, RiscOperand, RiscRegister, TraceChunkHeader,
+    TraceCollector,
 };
 use dynasmrt::{
     dynasm,
@@ -86,6 +87,12 @@ pub struct TranspilerBackend {
     may_early_exit: bool,
     /// The amount to bump the clk by each cycle.
     clk_bump: u64,
+    /// Debug mapping: RISC-V instruction index → x86-64 byte range.
+    instr_map: Vec<InstrMapEntry>,
+    /// Whether the code contains embedded absolute host function pointers
+    /// (from `call_extern_fn` or `inspect_register` etc.), making it
+    /// non-portable across process restarts.
+    has_embedded_host_calls: bool,
 }
 
 impl TraceCollector for TranspilerBackend {

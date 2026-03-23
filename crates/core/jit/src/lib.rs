@@ -4,6 +4,7 @@
 compile_error!("This crate is only supported on little endian targets.");
 
 pub mod backends;
+pub mod cache;
 pub mod context;
 pub mod debug;
 pub mod instructions;
@@ -24,6 +25,7 @@ use std::{
 };
 
 pub use backends::*;
+pub use cache::{InstrMapEntry, JitArtifact};
 pub use context::*;
 pub use instructions::*;
 pub use risc::*;
@@ -194,18 +196,44 @@ pub struct JitFunction<M> {
     _marker: std::marker::PhantomData<M>,
 }
 
+/// Holds the executable code, either from a fresh JIT compilation or from cached bytes.
+#[cfg(sp1_native_executor_available)]
+pub enum ExecutableCode {
+    /// Code produced directly by dynasmrt.
+    Dynasm(ExecutableBuffer),
+    /// Code loaded from cache into an executable mmap.
+    Mmap(memmap2::Mmap),
+}
+
+#[cfg(sp1_native_executor_available)]
+impl ExecutableCode {
+    fn as_ptr(&self) -> *const u8 {
+        match self {
+            Self::Dynasm(buf) => buf.as_ptr(),
+            Self::Mmap(mmap) => mmap.as_ptr(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Dynasm(buf) => buf.len(),
+            Self::Mmap(mmap) => mmap.len(),
+        }
+    }
+}
+
 /// A type representing a JIT compiled function.
 ///
 /// The underlying function should be of the form [`fn(*mut JitContext)`].
 #[cfg(sp1_native_executor_available)]
 pub struct JitFunction<M> {
-    jump_table: Vec<*const u8>,
-    code: ExecutableBuffer,
+    pub(crate) jump_table: Vec<*const u8>,
+    pub(crate) code: ExecutableCode,
 
     /// The initial memory image.
-    initial_memory_image: Arc<HashMap<u64, u64>>,
-    pc_start: u64,
-    input_buffer: VecDeque<Vec<u8>>,
+    pub(crate) initial_memory_image: Arc<HashMap<u64, u64>>,
+    pub(crate) pc_start: u64,
+    pub(crate) input_buffer: VecDeque<Vec<u8>>,
 
     /// A stream of public values from the program (global to entire program).
     pub public_values_stream: Vec<u8>,
@@ -236,6 +264,8 @@ impl<M: JitMemory> JitFunction<M> {
         memory_size: usize,
         pc_start: u64,
     ) -> std::io::Result<Self> {
+        let code = ExecutableCode::Dynasm(code);
+
         // Adjust the jump table to be absolute addresses.
         let buf_ptr = code.as_ptr();
         let jump_table =
@@ -320,7 +350,8 @@ impl<M: JitMemory> JitFunction<M> {
             return;
         }
 
-        let as_fn = std::mem::transmute::<*const u8, fn(*mut JitContext)>(self.code.as_ptr());
+        let as_fn =
+            std::mem::transmute::<*const u8, fn(*mut JitContext)>(self.code.as_ptr());
 
         // Ensure the memory pointer is aligned to the alignment of the u64.
         let align_offset = self.memory.as_ptr().align_offset(std::mem::align_of::<u64>());
@@ -361,6 +392,42 @@ impl<M: JitMemory> JitFunction<M> {
         self.clk = ctx.clk;
         self.global_clk = ctx.global_clk;
         self.exit_code = ctx.exit_code;
+    }
+
+    /// Create a [`JitArtifact`] from this function for caching.
+    ///
+    /// The artifact captures the raw code bytes, jump table offsets, and metadata
+    /// needed to reconstruct this function later.
+    pub fn to_artifact(
+        &self,
+        instr_map: Vec<cache::InstrMapEntry>,
+        pc_base: u64,
+        max_trace_size: u64,
+        clk_bump: u64,
+        has_host_call_relocations: bool,
+    ) -> cache::JitArtifact {
+        let code_ptr = self.code.as_ptr();
+        let code_len = self.code.len();
+        let code = unsafe { std::slice::from_raw_parts(code_ptr, code_len) }.to_vec();
+
+        let jump_table_offsets = self
+            .jump_table
+            .iter()
+            .map(|&ptr| unsafe { ptr.offset_from(code_ptr) as u32 })
+            .collect();
+
+        cache::JitArtifact {
+            format_version: 1,
+            code,
+            jump_table_offsets,
+            instr_map,
+            memory_size: self.memory.len() as u64,
+            pc_start: self.pc_start,
+            pc_base,
+            max_trace_size,
+            clk_bump,
+            has_host_call_relocations,
+        }
     }
 
     fn insert_memory_image(&mut self) {

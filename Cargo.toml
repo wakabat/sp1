@@ -242,6 +242,7 @@ derive-where = { version = "1.5.0", features = ["serde"] }
 dirs = "5.0.1"
 downloader = { version = "0.2", default-features = false }
 dynasmrt = "3.2.0"
+object = { version = "0.37", default-features = false }
 either = { version = "1.15.0", features = ["serde"] }
 elf = "0.7.4"
 elliptic-curve = "0.13.8"

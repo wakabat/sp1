@@ -2,8 +2,8 @@
 
 use super::{TranspilerBackend, CONTEXT};
 use crate::{
-    DebugFn, EcallHandler, ExternFn, JitFunction, JitMemory, RiscOperand, RiscRegister,
-    RiscvTranspiler,
+    cache::InstrMapEntry, DebugFn, EcallHandler, ExternFn, JitFunction, JitMemory, RiscOperand,
+    RiscRegister, RiscvTranspiler,
 };
 use dynasmrt::{
     dynasm,
@@ -42,6 +42,8 @@ impl RiscvTranspiler for TranspilerBackend {
             clk_bump,
             max_trace_size,
             may_early_exit: false,
+            instr_map: Vec::with_capacity(program_size),
+            has_embedded_host_calls: false,
         };
 
         // Handle calling conventions and save anything were gonna clobber.
@@ -65,7 +67,16 @@ impl RiscvTranspiler for TranspilerBackend {
 
         // Push the offset of the jumpdest for this instruction.
         let offset = self.inner.offset();
+        let instr_index = self.jump_table.len() as u32;
         self.jump_table.push(offset.0);
+
+        // Record the start of this instruction's byte range.
+        self.instr_map.push(InstrMapEntry {
+            instr_index,
+            riscv_pc: self.pc_base + (instr_index as u64) * 4,
+            start_offset: offset.0 as u32,
+            end_offset: offset.0 as u32, // updated in end_instr
+        });
 
         // We are now "within" an instruction.
         self.instruction_started = true;
@@ -93,6 +104,12 @@ impl RiscvTranspiler for TranspilerBackend {
             }
         }
 
+        // Record the end of this instruction's byte range.
+        let end = self.inner.offset().0 as u32;
+        if let Some(entry) = self.instr_map.last_mut() {
+            entry.end_offset = end;
+        }
+
         self.may_early_exit = false;
         self.control_flow_instruction_inserted = false;
         self.instruction_started = false;
@@ -109,6 +126,8 @@ impl RiscvTranspiler for TranspilerBackend {
     }
 
     fn call_extern_fn(&mut self, fn_ptr: ExternFn) {
+        self.has_embedded_host_calls = true;
+
         // Load the JitContext pointer into the argument register.
         dynasm! {
             self;
@@ -120,6 +139,8 @@ impl RiscvTranspiler for TranspilerBackend {
     }
 
     fn inspect_register(&mut self, reg: RiscRegister, handler: DebugFn) {
+        self.has_embedded_host_calls = true;
+
         // Load into the argument register for the function call.
         self.emit_risc_operand_load(RiscOperand::Register(reg), Rq::RDI as u8);
 
@@ -128,6 +149,7 @@ impl RiscvTranspiler for TranspilerBackend {
     }
 
     fn inspect_immediate(&mut self, imm: u64, handler: DebugFn) {
+        self.has_embedded_host_calls = true;
         dynasm! {
             self;
             .arch x64;
@@ -136,5 +158,42 @@ impl RiscvTranspiler for TranspilerBackend {
         }
 
         self.call_extern_fn_raw(handler as _);
+    }
+}
+
+impl TranspilerBackend {
+    /// Consume the backend and return both a [`JitFunction`] and a [`crate::cache::JitArtifact`].
+    ///
+    /// This is equivalent to calling [`RiscvTranspiler::finalize`] and then
+    /// [`JitFunction::to_artifact`], but avoids a redundant copy of the jump table.
+    pub fn finalize_with_artifact<M: JitMemory>(
+        mut self,
+    ) -> io::Result<(JitFunction<M>, crate::cache::JitArtifact)> {
+        self.epilogue();
+
+        let instr_map = std::mem::take(&mut self.instr_map);
+        let has_host_calls = self.has_embedded_host_calls;
+        let pc_base = self.pc_base;
+        let max_trace_size = self.max_trace_size;
+        let clk_bump = self.clk_bump;
+
+        let code = self.inner.finalize().expect("failed to finalize x86 backend");
+        debug_assert!(code.size() > 0, "Got empty x86 code buffer");
+
+        let func: JitFunction<M> =
+            JitFunction::new(code, self.jump_table, self.memory_size, self.pc_start)?;
+        let artifact =
+            func.to_artifact(instr_map, pc_base, max_trace_size, clk_bump, has_host_calls);
+        Ok((func, artifact))
+    }
+
+    /// Get the instruction map (RISC-V PC → x86-64 byte range).
+    pub fn instr_map(&self) -> &[InstrMapEntry] {
+        &self.instr_map
+    }
+
+    /// Whether the code has embedded absolute host function pointers.
+    pub fn has_embedded_host_calls(&self) -> bool {
+        self.has_embedded_host_calls
     }
 }
