@@ -78,13 +78,12 @@ impl MinimalExecutor {
     ) -> Self {
         tracing::debug!("restoring JIT function from compiled code cache");
 
-        let mut jit_fn: JitFunction<AnonymousMemory> =
-            JitFunction::from_compiled_code(
-                compiled,
-                crate::minimal::ecall::sp1_ecall_handler,
-                crate::minimal::ecall::sp1_unimp_handler,
-            )
-            .expect("Failed to restore JIT function");
+        let mut jit_fn: JitFunction<AnonymousMemory> = JitFunction::from_compiled_code(
+            compiled,
+            crate::minimal::ecall::sp1_ecall_handler,
+            crate::minimal::ecall::sp1_unimp_handler,
+        )
+        .expect("Failed to restore JIT function");
         jit_fn.with_initial_memory_image(program.memory_image.clone());
 
         Self {

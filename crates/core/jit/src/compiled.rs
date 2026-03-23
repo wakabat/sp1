@@ -184,11 +184,8 @@ impl CompiledCode {
             // Plain bytes: run until the next label or pointer site.
             let next_label = label_iter.peek().map(|(off, _)| *off);
             let next_ptr = ptr_sites.range(pos + 1..).next().map(|(&off, _)| off);
-            let run_end = [next_label, next_ptr, Some(self.code.len())]
-                .into_iter()
-                .flatten()
-                .min()
-                .unwrap();
+            let run_end =
+                [next_label, next_ptr, Some(self.code.len())].into_iter().flatten().min().unwrap();
 
             for chunk in self.code[pos..run_end].chunks(8) {
                 let hex: Vec<String> = chunk.iter().map(|b| format!("0x{b:02x}")).collect();

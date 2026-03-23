@@ -3,8 +3,7 @@
 use super::{TranspilerBackend, CONTEXT, PC_OFFSET, TEMP_A, TEMP_B};
 use crate::{
     impl_alu32_imm_opt, impl_alu_imm_opt, impl_risc_alu, impl_shift32_imm_opt, ComputeInstructions,
-    ControlFlowInstructions, JitContext, MemoryInstructions, RiscOperand, RiscRegister,
-    RiscvTranspiler, SystemInstructions,
+    ControlFlowInstructions, MemoryInstructions, RiscOperand, RiscRegister, SystemInstructions,
 };
 use dynasmrt::{dynasm, x64::Rq, DynasmApi, DynasmLabelApi};
 
