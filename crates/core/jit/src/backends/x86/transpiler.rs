@@ -7,8 +7,8 @@ use crate::{
 };
 use dynasmrt::{
     dynasm,
-    x64::{Rq, X64Relocation},
     mmap::MutableBuffer,
+    x64::{Rq, X64Relocation},
     DynasmApi, VecAssembler,
 };
 use std::io;

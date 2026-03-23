@@ -70,8 +70,8 @@ pub struct CompiledCode {
 impl CompiledCode {
     /// Serialize and write this blob to `path` (overwrites any existing file).
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        let bytes = bincode::serialize(self)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let bytes =
+            bincode::serialize(self).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         File::create(path)?.write_all(&bytes)
     }
 
@@ -81,8 +81,6 @@ impl CompiledCode {
         File::open(path)?.read_to_end(&mut bytes)?;
         bincode::deserialize(&bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
-
-
 }
 
 // ─── Assembly-source emission ─────────────────────────────────────────────
@@ -268,7 +266,8 @@ mod tests {
         // Only the post-ecall instruction bytes (riscv_pc_0x1004 region) may contain 0xf4.
         // The ecall slot itself must not have been emitted as .byte.
         assert!(
-            !text[..text.find("riscv_pc_0x00001004:").unwrap()].contains(".byte\t0xf4,0xf4,0xf4,0xf4,0xf4,0xf4,0xf4,0xf4"),
+            !text[..text.find("riscv_pc_0x00001004:").unwrap()]
+                .contains(".byte\t0xf4,0xf4,0xf4,0xf4,0xf4,0xf4,0xf4,0xf4"),
             "ecall pointer bytes leaked as raw .byte"
         );
         let _ = lines_with_f4_after_ecall; // used above
@@ -300,4 +299,3 @@ mod tests {
         assert_eq!(loaded.ecall_ptr_offsets, vec![2, 18]);
     }
 }
-
