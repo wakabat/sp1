@@ -1648,7 +1648,9 @@ impl SystemInstructions for TranspilerBackend {
             mov rdi, Rq(CONTEXT)
         };
 
-        self.call_extern_fn_raw(self.ecall_handler as _);
+        // Record the offset so the handler pointer can be patched at restore time.
+        let ptr_offset = self.call_extern_fn_raw(self.ecall_handler as _);
+        self.ecall_ptr_offsets.push(ptr_offset);
 
         // The ecall returns a u64 in RAX.
         self.emit_risc_register_store(Rq::RAX as u8, RiscRegister::X5);
